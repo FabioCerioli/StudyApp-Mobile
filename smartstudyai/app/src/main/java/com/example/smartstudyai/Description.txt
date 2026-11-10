@@ -1,0 +1,253 @@
+
+  ApiClient.kt  
+Il file ApiClient.kt definisce un oggetto Singleton incaricato di configurare e istanziare il client HTTP per le comunicazioni di rete.
+Sfruttando le librerie Retrofit e OkHttp, lo script stabilisce l'indirizzo IP di base del server e configura un HttpLoggingInterceptor per il monitoraggio e il debugging del traffico.
+Per garantire stabilità durante le comunicazioni con il modello di Machine Learning, sono definite policy rigorose per i timeout di connessione, lettura e scrittura, impostati a 30 secondi.
+La serializzazione e deserializzazione dei dati in formato JSON è demandata al GsonConverterFactory.
+Infine, l'istanza sensorApi viene esposta tramite inizializzazione lazy, ottimizzando le risorse di sistema poiché il client viene creato solo al momento del suo effettivo utilizzo.
+
+  SensorApi.kt  
+Lo script SensorApi.kt funge da contratto (interfaccia) per le chiamate di rete gestite da Retrofit, astraendo la complessità della comunicazione HTTP. 
+Al suo interno definisce l'endpoint REST per l'interazione con il Web Service tramite una richiesta @POST all'indirizzo "predict". 
+Il metodo predict sfrutta nativamente le Kotlin Coroutines, essendo contrassegnato dalla keyword suspend, il che permette un'esecuzione asincrona e non bloccante sul thread principale. 
+La funzione accetta nel corpo della richiesta (@Body) un oggetto WindowData contenente i campioni hardware, e mappa in modo tipizzato la risposta JSON in arrivo dal server direttamente in un oggetto di classe PredictionResponse.
+
+
+  ActivityDao.kt  
+Il file ActivityDao.kt definisce il Data Access Object (DAO) per l'entità StudyActivity, fornendo l'interfaccia necessaria per le operazioni sul database locale. 
+Sfruttando le potenzialità della libreria Room, espone metodi asincroni (suspend) per l'inserimento, l'aggiornamento e la cancellazione delle attività, restituendo in modo efficiente l'ID autogenerato durante la creazione. 
+L'aspetto chiave a livello architetturale è l'utilizzo di Flow nel metodo getAll(), che permette di osservare in tempo reale i cambiamenti dei dati ordinati per scadenza. 
+Questo approccio si integra nel pattern MVVM, garantendo che lo stato osservato dal ViewModel sia costantemente e automaticamente allineato alle modifiche del database locale.
+
+  ScheduleDao.kt  
+L'interfaccia ScheduleDao.kt astrae l'accesso ai dati relativi alla pianificazione settimanale definita dall'entità StudySchedule. 
+Oltre ai canonici comandi di inserimento e aggiornamento, lo script espone query SQL mirate per operare su sottoinsiemi di dati, come il recupero (getSchedulesForActivity) o l'eliminazione in blocco (deleteSchedulesForActivity) di tutti gli orari vincolati a una specifica attività tramite la chiave esterna activityId. 
+L'estrazione dell'intero palinsesto avviene tramite Flow, interrogando il database per restituire i record preordinati logicamente per giorno della settimana e orario di inizio. 
+Ciò permette di demandare il costo computazionale dell'ordinamento direttamente al motore SQLite, alleggerendo le logiche di business del livello superiore.
+
+  SessionDao.kt  
+Il file SessionDao.kt gestisce il livello di persistenza delle singole sessioni di studio monitorate dal sistema. 
+Tramite l'annotazione @Dao, lo script definisce funzioni suspend delegate all'inserimento (con restituzione immediata della Primary Key) e al successivo aggiornamento dei record una volta terminato il campionamento dei sensori. 
+Implementa inoltre query specifiche per l'analisi dello storico: getSessions restituisce le sessioni di una data attività in ordine cronologico inverso (ID decrescente), mentre getSessionCount fornisce in modo efficiente il computo totale. 
+Questa specializzazione del DAO è fondamentale nel contesto MVVM, in quanto fornisce al Repository e ai ViewModel dati pre-filtrati e aggregati, ottimizzando la generazione delle statistiche finali dell'utente.
+
+
+  AppDatabase.kt  
+Il file AppDatabase.kt rappresenta il nodo centrale per la persistenza locale dei dati, implementando la classe astratta AppDatabase che eredita da RoomDatabase. 
+Tramite l'annotazione @Database, lo script definisce lo schema relazionale dell'applicazione vincolando le tre entità fondamentali: StudyActivity, StudySchedule e StudySession, e stabilendo la versione iniziale dello schema. 
+A livello architetturale, espone i metodi astratti necessari per l'accesso ai rispettivi Data Access Object (ActivityDao, ScheduleDao, SessionDao). 
+Questa struttura incapsula completamente la complessità del motore SQLite sottostante, fornendo ai Repository (e, di riflesso, ai ViewModel) un'interfaccia tipizzata, sicura e unificata per interagire con i dati persistenti dell'applicazione.
+
+
+
+  StudyActivity.kt  
+Il file  StudyActivity.kt  definisce il modello dati principale per la rappresentazione di un'attività di studio all'interno del database locale. 
+Attraverso l'annotazione  @Entity, la data class viene mappata direttamente sulla tabella "study_activity" del motore SQLite sottostante. 
+Lo script definisce la struttura fondamentale dell'attività, includendo parametri come titolo, descrizione, ore settimanali e scadenza, assegnando inoltre una chiave primaria  activityId  ad autogenerazione. 
+Nel contesto dell'architettura MVVM, questa classe rappresenta l'entità base del livello Model, garantendo la coerenza dei dati che fluiscono dal database ai  Repository  e successivamente ai  ViewModel , per essere infine renderizzati in modo dichiarativo dall'interfaccia utente.
+
+  StudySchedule.kt  
+Il file  StudySchedule.kt  modella l'entità relazionale dedicata alla pianificazione temporale (orari e giorni) associata a una specifica attività.
+A livello architetturale, l'aspetto più rilevante è l'implementazione dell'integrità referenziale: tramite l'annotazione  @ForeignKey , la classe è strettamente vincolata a  StudyActivity  mediante il parametro  activityId .
+L'inclusione della direttiva  onDelete = ForeignKey.CASCADE  assicura che, in caso di rimozione di un'attività principale, tutti i record di schedulazione ad essa subordinati vengano eliminati automaticamente, prevenendo la formazione di dati orfani nel database.
+Questa struttura garantisce un Model solido e coerente per il livello dati, permettendo al sistema di gestire il calendario in modo sicuro.
+
+  StudySession.kt  
+Lo script  StudySession.kt  definisce l'entità preposta al salvataggio dello storico delle singole sessioni di studio effettuate dall'utente.
+Come per la pianificazione, anche questa tabella implementa un vincolo di integrità referenziale  CASCADE  verso la tabella padre  StudyActivity .
+La  data class  incapsula le metriche vitali prodotte durante l'utilizzo dell'app, tra cui i timestamp di inizio e fine, la durata in secondi e i risultati dell'elaborazione di Machine Learning ( averageConfidence  e  prediction ).
+Nel pattern MVVM, questa entità è cruciale: storicizza i dati generati dinamicamente dai sensori e validati dall'IA, fornendo al  Repository  la base dati necessaria affinché il  ViewModel  possa elaborare statistiche di performance accurate e persistenti nel tempo.
+
+  PredictionResponse.kt  
+Il file PredictionResponse.kt definisce un modello dati immutabile preposto alla deserializzazione delle risposte JSON provenienti dal Web Service di Machine Learning.
+Strutturata come una data class, questa entità mappa la struttura della risposta del server, incapsulando il risultato dell'analisi predittiva (prediction), il grado di confidenza dell'algoritmo (confidence) e il numero di feature processate (features).
+
+
+  WindowData.kt  
+Lo script WindowData.kt modella il payload di dati strutturati da inviare al server remoto per l'inferenza di Machine Learning.
+Implementato come una semplice data class, il file agisce per incapsulare una lista di oggetti SensorData, i quali rappresentano i campioni grezzi rilevati dall'hardware del dispositivo (samples).
+
+  ActivityRepository.kt  
+Il file ActivityRepository.kt implementa il pattern Repository per l'entità StudyActivity, fungendo da Single Source of Truth per l'accesso ai dati centralizzati.
+Nel contesto dell'architettura MVVM, questa classe astrae la logica di persistenza incapsulando le chiamate dirette all'interfaccia ActivityDao.
+Lo script espone metodi asincroni (suspend), gestendo in modo sicuro l'inserimento, l'aggiornamento e la rimozione di un'attività di studio sul thread di background.
+Inoltre, propaga al livello superiore la lista completa delle attività sotto forma di stream reattivo (Flow) tramite il metodo getAllActivities().
+Questo disaccoppiamento architetturale garantisce che il ViewModel non debba conoscere i dettagli implementativi del database SQLite sottostante.
+
+  ScheduleRepository.kt  
+Lo script ScheduleRepository.kt gestisce l'accesso e la manipolazione dei dati relativi alla pianificazione temporale degli impegni (StudySchedule).
+Agendo da intermediario tra i ViewModel e il livello DAO, espone metodi per l'inserimento e il recupero asincrono degli orari vincolati a una specifica attività.
+Di particolare rilevanza è il metodo replaceSchedules, che implementa una logica di sovrascrittura: elimina prima tutti i record preesistenti per un dato activityId e, successivamente, inserisce iterativamente i nuovi elementi del palinsesto.
+
+  SensorRepository.kt  
+Il file SensorRepository.kt rappresenta il nodo architetturale più complesso del progetto, incaricato di coordinare i componenti hardware del dispositivo e i servizi Cloud.
+Il repository avvia il campionamento tramite il SensorCollector e accumula i dati grezzi all'interno del WindowBuffer.
+Al completamento della finestra temporale, lo script lancia una Coroutine nel thread Dispatchers.IO per inoltrare il payload strutturato al Web Service di Machine Learning tramite ApiClient.
+I risultati dell'inferenza, così come l'eventuale latenza o gli errori di connessione, vengono propagati reattivamente al ViewModel esponendo diverse variabili di stato (StateFlow), come prediction, confidence e connectionError.
+
+  SessionRepository.kt  
+Il file SessionRepository.kt definisce il layer di astrazione per l'accesso e la manipolazione dello storico delle sessioni di studio concluse (StudySession).
+Incapsulando le interrogazioni del SessionDao, lo script offre ai ViewModel un'API semplificata e asincrona per la storicizzazione delle metriche dell'utente.
+Espone metodi delegati alla creazione di un nuovo record di sessione e al successivo aggiornamento dei dati (come la durata effettiva e la confidenza media elaborata dall'IA) al termine dell'attività.
+Infine, fornisce il metodo getSessionsByActivity per estrarre l'elenco delle sessioni pregresse, operazione fondamentale per il calcolo algoritmico e la successiva visualizzazione delle statistiche aggregate di rendimento dello studente.
+
+  AppNavigation.kt  
+Lo script AppNavigation.kt costituisce il nodo centrale (router) dell'interfaccia grafica, implementando il grafo di navigazione tramite il componente NavHost di Jetpack Compose.
+Il file definisce le transizioni tra i vari Composable, occupandosi inoltre dell'istanziazione e dell'iniezione dei ViewModel nelle rispettive schermate tramite apposite Factory.
+Oltre a gestire il passaggio di parametri dinamici nelle rotte (come activityId per l'editing o le statistiche), lo script orchestra logiche di integrazione, come la programmazione delle notifiche di sistema (ReminderScheduler) al salvataggio di una nuova attività.
+Agendo come strato di orchestrazione tra la UI e i ViewModel, centralizza il flusso utente mantenendo i singoli componenti visivi isolati e riutilizzabili.
+
+  Screen.kt  
+Il file Screen.kt definisce un'architettura type-safe per la gestione delle rotte di navigazione all'interno dell'applicazione.
+Attraverso l'implementazione di una sealed class, lo script incapsula i percorsi sotto forma di oggetti costanti (es. Home, Create, Session), associando a ciascuno una stringa univoca.
+Questo approccio architetturale elimina l'uso di stringhe hardcoded sparse per il codice, riducendo drasticamente il rischio di errori a runtime o crash dovuti a refusi di battitura durante i cambi di contesto.
+Nel framework di Jetpack Compose Navigation, questa classe funge da dizionario centralizzato, garantendo una manutenzione scalabile e sicura dell'intero grafo dell'app.
+
+
+  NotificationHelper.kt  
+Il file NotificationHelper.kt funge da modulo di configurazione per il sistema di messaggistica di Android.
+Il suo scopo principale è la registrazione di un NotificationChannel univoco, un requisito architetturale obbligatorio introdotto a partire da Android 8.0 (API 26) per permettere la visualizzazione degli avvisi all'utente.
+Lo script definisce la costante CHANNEL_ID e configura il canale con priorità IMPORTANCE_HIGH, assicurando che i promemoria di studio vengano recapitati tempestivamente con notifiche in primo piano (Heads-up).
+Questa inizializzazione viene delegata all'avvio dell'applicazione per garantire che il sistema operativo sia immediatamente pronto a recepire gli allarmi.
+
+  ReminderScheduler.kt  
+Lo script ReminderScheduler.kt costituisce il motore di pianificazione in background dell'applicazione.
+Sfruttando il servizio di sistema AlarmManager, orchestra la programmazione di allarmi settimanali ricorrenti tramite l'istruzione setRepeating e il parametro di risveglio RTC_WAKEUP.
+Il file incapsula la logica per la costruzione sicura del PendingIntent, applicando i flag FLAG_UPDATE_CURRENT e FLAG_IMMUTABLE, indispensabili per prevenire vulnerabilità di sicurezza e crash nelle moderne versioni di Android.
+Include inoltre una gestione essenziale dei casi limite: se l'orario calcolato dal Calendar per l'attivazione risulta già trascorso, il sistema aggiunge un offset di una settimana, normalizzando l'esecuzione dell'allarme.
+
+  ScheduleUtils.kt  
+Il file di utilità ScheduleUtils.kt fornisce una suite di funzioni ausiliarie per il parsing, il mapping e la normalizzazione dei dati temporali.
+Espone il metodo dayToCalendar, incaricato di interpretare le stringhe relative ai giorni della settimana (gestendo eventuali varianti ortografiche e accenti) e di tradurle nelle costanti intere compatibili con la classe java.util.Calendar.
+Le funzioni parseHour e parseMinute si occupano di frammentare stringhe di formato orario standard (es. "14:30") per estrarre valori numerici utilizzabili.
+Queste funzioni pure stateless disaccoppiano la complessa manipolazione delle stringhe sia dai ViewModel che dal Scheduler, favorendo il principio di responsabilità singola (SRP).
+
+  StudyReminderReceiver.kt  
+Il file StudyReminderReceiver.kt definisce un BroadcastReceiver di sistema dedicato esclusivamente all'intercettazione dei trigger generati dall'AlarmManager.
+All'attivazione, la classe sovrascrive il ciclo onReceive per comporre e lanciare la notifica visiva tramite la libreria NotificationCompat.
+Lo script recupera dinamicamente il titolo dell'attività di studio (inserito come extra nell'Intent) e ne esegue il dispatch sul canale preregistrato.
+Di fondamentale importanza è l'inclusione dell'annotazione @RequiresPermission(Manifest.permission.POST_NOTIFICATIONS), che vincola e documenta l'esecuzione di questo modulo al possesso dello specifico permesso a runtime, in ottemperanza ai recenti vincoli di privacy imposti dal sistema operativo.
+
+
+  SensorCollector.kt  
+Il file SensorCollector.kt gestisce l'interfacciamento diretto con l'hardware del dispositivo tramite il servizio di sistema SensorManager.
+Implementando l'interfaccia SensorEventListener, lo script registra e monitora gli eventi dell'accelerometro e del giroscopio, impostando un periodo di campionamento di 20.000 microsecondi (50 Hz).
+Ad ogni aggiornamento rilevato, il metodo onSensorChanged aggiorna le variabili di stato interne per i sei assi spaziali e genera istantaneamente un nuovo oggetto SensorData associato a un timestamp, emettendolo tramite una funzione di callback.
+A livello architetturale, questo modulo astrae completamente la complessità del framework Android, agendo come sorgente dati continua (stream) per il SensorRepository, il quale resta così agnostico rispetto all'implementazione fisica dei sensori.
+
+  SensorData.kt  
+Lo script SensorData.kt definisce il modello dati atomico per la singola lettura combinata dei sensori di movimento.
+Implementata come una data class puramente immutabile, l'entità incapsula un timestamp univoco e i sei gradi di libertà del dispositivo in un dato istante: tre assi per l'accelerazione lineare (ax, ay, az) e tre per la velocità angolare rilevata dal giroscopio (gx, gy, gz).
+All'interno dell'architettura di sistema, l'immutabilità strutturale di questa classe è essenziale: garantisce la thread-safety durante il rapido passaggio dei campioni dal SensorCollector alle fasi asincrone di buffering, scongiurando fenomeni di corruzione dei dati o race conditions.
+
+  WindowBuffer.kt  
+Il file WindowBuffer.kt implementa la complessa logica di aggregazione spaziotemporale dei campioni hardware, un prerequisito fondamentale per l'inferenza di Machine Learning sulle serie storiche.
+Lo script accumula sequenzialmente le istanze di SensorData in un buffer interno fino al raggiungimento di una windowSize prefissata, il cui valore di default è pari a 128 campioni.
+Utilizzando un approccio a finestre fisse Tumbling Window, il metodo addSample estrae la lista completata e azzera simultaneamente la memoria tampone per avviare il ciclo di campionamento successivo.
+Architetturalmente, questo modulo funge da throttle: riduce il flusso ad alta frequenza dei sensori in blocchi dimensionalmente congrui con i tensori in input attesi dal modello predittivo, minimizzando il carico di rete.
+
+
+  CreateActivityScreen.kt  
+Il file  CreateActivityScreen.kt  definisce l'interfaccia utente dichiarativa per la generazione di una nuova attività di studio.
+Sviluppato con Jetpack Compose, lo script gestisce dinamicamente lo stato locale degli input dell'utente (titolo, descrizione) e la selezione interattiva del palinsesto settimanale tramite menu a discesa. A livello architetturale, la schermata implementa fedelmente il principio dello  State Hoisting : non esegue operazioni dirette di persistenza, ma espone una callback  onSave  che delega la logica di business e il calcolo del monte ore al livello di navigazione.
+
+  EditActivityScreen.kt  
+Lo script  EditActivityScreen.kt  implementa la vista dedicata alla modifica di un'attività preesistente e dei relativi orari.
+Condividendo gran parte dell'impostazione strutturale con la schermata di creazione, il componente pre-popola i campi di testo e i selettori temporali leggendo i parametri passati in ingresso (entità  StudyActivity  e lista di  StudySchedule ).
+La funzione  @Composable  osserva e manipola questi dati tramite variabili di stato ( remember ), propagando l'entità aggiornata e la nuova configurazione settimanale verso i livelli superiori tramite la callback  onSave , mantenendo il componente puramente visivo.
+
+  SessionScreen.kt  
+Il file  SessionScreen.kt  rappresenta l'interfaccia principale per il monitoraggio in tempo reale della sessione di studio.
+Il componente si interfaccia in modo strettamente reattivo con lo  StudySessionViewModel , raccogliendo (tramite  collectAsState() ) e renderizzando parametri dinamici come il tempo trascorso, lo stato di connessione e la percentuale di confidenza elaborata dal modello di Machine Learning. In base al responso predittivo ("STUDY" o altre distrazioni), la UI adatta i propri elementi testuali per fornire un feedback istantaneo all'utente, mentre i bottoni di controllo delegano la logica di avvio e arresto ai rispettivi metodi del ViewModel.
+
+  StatisticsScreen.kt  
+Lo script  StatisticsScreen.kt  fornisce un resoconto visivo delle metriche di rendimento e dello storico delle sessioni per una data attività. Interrogando lo  StatisticsViewModel , la schermata osserva flussi di dati aggregati, renderizzando una scheda riassuntiva (con totali e confidenza media) e un elenco dettagliato delle singole iterazioni passate.
+Per garantire prestazioni ottimali anche in presenza di ampi storici di dati, il rendering della lista è implementato tramite il componente  LazyColumn , che ricicla efficientemente le view e sfrutta l'identificativo univoco della sessione ( key = { session -> session.id  ) per ottimizzare i processi di ricomposizione grafica.
+
+  ActivityListScreen.kt  
+Il file  ActivityListScreen.kt  funge da punto d'ingresso principale dell'applicazione (Home), presentando all'utente il catalogo delle attività salvate.
+Sfruttando il layout strutturale  Scaffold , integra componenti standard come i  FloatingActionButton  per l'accesso rapido al calendario e alla schermata di creazione.
+Il corpo centrale è delegato a una  LazyColumn  che itera sulla lista delle attività, renderizzando per ciascuna una  ActivityCard  personalizzata. Rispettando il pattern architetturale, il componente è completamente privo di logica di stato: riceve i dati in ingresso e propaga gli intenti dell'utente (avvio, modifica, eliminazione, statistiche) esclusivamente tramite funzioni  lambda .
+
+  CalendarScreen.kt  
+Lo script  CalendarScreen.kt  definisce una vista riepilogativa dell'intero palinsesto settimanale di studio.
+Il componente riceve in input una lista aggregata di oggetti  CalendarSchedule  (che accoppiano gli orari alle rispettive informazioni dell'attività) e la espone visivamente organizzandola per giorni della settimana.
+Attualmente, il raggruppamento e l'ordinamento cronologico dei dati vengono eseguiti computazionalmente all'interno del metodo  @Composable  stesso, iterando sui sette giorni e filtrando la lista sorgente. La schermata restituisce una gerarchia visiva pulita, composta da sezioni giornaliere ( DaySection ) contenenti le singole schede orarie ( ScheduleCard ).
+
+
+
+
+
+
+  ActivityViewModel.kt e Factory  
+Il file ActivityViewModel.kt gestisce la logica di presentazione per le entità StudyActivity, interfacciandosi in modo asincrono con il rispettivo Repository.
+Tramite l'uso del viewModelScope, esegue le operazioni CRUD (creazione, lettura, aggiornamento, eliminazione) su un thread in background, garantendo la reattività dell'interfaccia utente.
+Espone lo stato delle attività sotto forma di stream reattivi (Flow e MutableStateFlow), permettendo alla UI di aggiornarsi automaticamente. Riceve l'istanza del repository tramite la ActivityViewModelFactory (definita nell'omonimo file),
+
+  CalendarViewModel.kt e Factory
+Lo script CalendarViewModel.kt funge da aggregatore di dati avanzato per la visualizzazione del palinsesto settimanale.
+Utilizzando l'operatore reattivo combine, il ViewModel effettua il  merge  dei flussi dati provenienti contemporaneamente da ActivityRepository e ScheduleRepository.
+Questa operazione di mapping genera dinamicamente una nuova lista di oggetti CalendarSchedule, accoppiando efficacemente ogni orario alla propria attività padre.
+L'iniezione sicura delle due dipendenze necessarie avviene tramite la classe CalendarViewModelFactory, che sovrascrive il costruttore di ViewModelProvider.Factory sollevando l'interfaccia grafica dall'onere dell'istanziazione.
+
+  ScheduleViewModel.kt e Factory  
+Il file ScheduleViewModel.kt astrae la logica di business legata alla pianificazione degli orari e dei giorni di studio.
+Lanciando apposite Coroutines nel viewModelScope, gestisce in background l'inserimento o la sostituzione massiva (replaceSchedules) dell'intero palinsesto vincolato a una determinata attività.
+Il metodo prevede l'esecuzione di una funzione di callback (onComplete) per notificare alla View l'avvenuta sincronizzazione dei dati nel database locale, innescando così eventi di navigazione UI.
+L'iniezione del ScheduleRepository all'interno del ciclo di vita della schermata è demandata al modulo ausiliario ScheduleViewModelFactory.
+
+
+
+
+
+
+
+  SessionActivityViewModel.kt e Factory  
+Il file SessionActivityViewModel.kt implementa un componente architetturale dedicato esclusivamente al caricamento e all'esposizione dello stato di una singola attività di studio.
+Invocando il metodo loadActivity, il ViewModel interroga l'ActivityRepository per recuperare i dettagli dell'entità corrispondente all'identificativo fornito.
+Il dato risultante viene incapsulato e propagato all'interfaccia grafica tramite uno StateFlow reattivo, garantendo l'aggiornamento automatico della UI.
+L'istanza viene generata tramite la classe SessionActivityViewModelFactory, che inietta il repository necessario al momento della creazione del componente.
+
+  StatisticsViewModel.kt e Factory  
+Lo script StatisticsViewModel.kt gestisce la logica di aggregazione e calcolo delle metriche di rendimento dell'utente.
+Il componente estrae lo storico delle sessioni dal SessionRepository e il titolo dell'attività dall'ActivityRepository, incapsulando i risultati in un'apposita data class denominata ActivityStatistics.
+All'interno di una Coroutine dedicata, il ViewModel esegue i calcoli algoritmici necessari, elaborando la sommatoria del tempo totale di studio e la media aritmetica dei valori di confidenza registrati dall'intelligenza artificiale.
+I dati aggregati e l'elenco completo delle sessioni vengono infine esposti alla UI tramite StateFlow reattivi, sollevando la vista da qualsiasi onere computazionale. L'iniezione delle due dipendenze architetturali è garantita dall'implementazione della StatisticsViewModelFactory.
+
+  StudySessionViewModel.kt e Factory  
+Il file StudySessionViewModel.kt costituisce il nucleo operativo per il monitoraggio in tempo reale dell'attività di studio.
+Il componente orchestra flussi asincroni paralleli: l'avvio della raccolta dati hardware tramite il SensorRepository e il tracciamento temporale della sessione gestito da un timer in background.
+All'avvio (startSession), lo script istanzia un nuovo record nel database, per poi aggiornarlo al termine (stopSession) con la durata effettiva e l'ultimo valore di confidenza elaborato dal modello predittivo.
+Il ViewModel espone le metriche dell'IA, come prediction e confidence, legandole direttamente allo stato reattivo del repository. La corretta istanziazione di questo complesso modulo e l'iniezione dei repository avvengono tramite l'ausilio della StudySessionViewModelFactory.
+
+
+
+
+
+
+
+  MainActivity.kt  
+Il file MainActivity.kt costituisce il punto di ingresso entry point dell'applicazione e funge da contenitore host per l'interfaccia grafica basata su Jetpack Compose.
+All'avvio del ciclo di vita, all'interno del metodo onCreate, lo script provvede all'inizializzazione del canale di sistema per i promemoria e gestisce dinamicamente le autorizzazioni a runtime, richiedendo esplicitamente il permesso POST_NOTIFICATIONS sui dispositivi dotati di Android 13 o versioni successive.
+Durante questa fase di bootstrap, la classe istanzia la connessione al database locale tramite Room e costruisce i vari moduli di accesso ai dati (ActivityRepository, SensorRepository, SessionRepository, ScheduleRepository).
+Infine, il metodo setContent inizializza il tema grafico e avvia il rendering della UI delegandolo al componente AppNavigation, a cui inietta le dipendenze appena generate.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

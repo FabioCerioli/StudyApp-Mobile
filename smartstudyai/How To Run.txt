@@ -1,0 +1,6 @@
+Per avviare il server entrare nella cartella backend e installare tutti i requisiti presenti nel file req.txt
+Successivamente procedere lanciando il comando py app.py
+
+una volta avviato verrà fornito l'indirizzo ip da utilizzare e inserire nel file ApiClint.kt nel progetto (Osservare la configurazione presente nella guida all'uso all'itnerno della relazione)
+
+Lanciare l'applicazione dal dispositivo che si desidera
